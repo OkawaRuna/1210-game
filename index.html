@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>フルーツマージゲーム</title>
+    <title>SUIKA-GAME</title>
     <style>
         body {
             margin: 0;
@@ -19,6 +19,7 @@
             border: 2px solid #333;
             background-color: #fff;
             box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            display: none; /* Hidden by default */
         }
         #ui-container {
             position: absolute;
@@ -31,7 +32,7 @@
             color: #333;
             pointer-events: none;
         }
-        #game-over-screen {
+        .screen {
             position: absolute;
             top: 0;
             left: 0;
@@ -39,42 +40,59 @@
             bottom: 0;
             background-color: rgba(0, 0, 0, 0.7);
             color: white;
-            display: none; /* Initially hidden */
+            display: none; /* Hidden by default */
             flex-direction: column;
             justify-content: center;
             align-items: center;
             text-align: center;
         }
-        #game-over-screen h2 {
+        .screen h2 {
             margin: 0;
             font-size: 48px;
         }
-        #game-over-screen p {
+        .screen p {
             font-size: 24px;
         }
-        #restart-button {
+        .menu-button {
             margin-top: 20px;
-            padding: 10px 20px;
-            font-size: 20px;
+            padding: 15px 30px;
+            font-size: 24px;
             cursor: pointer;
             border: none;
             border-radius: 5px;
             background-color: #4CAF50;
             color: white;
+            width: 250px;
+        }
+        #main-menu-screen {
+            display: flex; /* Visible by default */
+            position: static; /* Not an overlay */
+            background-color: #fff;
+            color: #333;
         }
     </style>
 </head>
 <body>
+    <div id="main-menu-screen" class="screen">
+        <h2>SUIKA-GAME</h2>
+        <button id="endless-mode-button" class="menu-button">通常モード</button>
+        <button id="clear-mode-button" class="menu-button">タイムアタック</button>
+    </div>
 
     <div id="game-container">
         <div id="ui-container">
             <div id="score">Score: 0</div>
+            <div id="timer">Time: 00:00.0</div>
         </div>
-        <div id="game-over-screen">
+        <div id="game-over-screen" class="screen">
             <h2>Game Over</h2>
             <p id="final-score"></p>
-            <button id="continue-button">コンティニュー</button>
-            <button id="restart-button">もう一度遊ぶ</button>
+            <button id="back-to-menu-gameover" class="menu-button">メニューに戻る</button>
+        </div>
+        <div id="win-screen" class="screen">
+            <h2>クリア！</h2>
+            <p id="win-score"></p>
+            <button id="back-to-menu-win" class="menu-button">メニューに戻る</button>
         </div>
     </div>
 
@@ -84,27 +102,39 @@
             // --- Matter.js setup ---
             const { Engine, Render, Runner, World, Bodies, Events, Body } = Matter;
 
+            // --- DOM Elements ---
+            const mainMenuScreen = document.getElementById('main-menu-screen');
             const gameContainer = document.getElementById('game-container');
             const scoreElement = document.getElementById('score');
+            const timerElement = document.getElementById('timer');
             const gameOverScreen = document.getElementById('game-over-screen');
+            const winScreen = document.getElementById('win-screen');
             const finalScoreElement = document.getElementById('final-score');
-            const restartButton = document.getElementById('restart-button');
-            const continueButton = document.getElementById('continue-button');
+            const winScoreElement = document.getElementById('win-score');
+            
+            // Buttons
+            const endlessModeButton = document.getElementById('endless-mode-button');
+            const clearModeButton = document.getElementById('clear-mode-button');
+            const backToMenuGameOver = document.getElementById('back-to-menu-gameover');
+            const backToMenuWin = document.getElementById('back-to-menu-win');
 
-            // Game dimensions
+            // --- Game Constants ---
             const WIDTH = 400;
             const HEIGHT = 600;
             const DANGER_ZONE_Y = 80;
 
+            // --- Game State Variables ---
             let engine, render, runner;
             let currentFruit = null;
             let score = 0;
             let isGameOver = false;
-            let continueUsed = false;
+            let gameMode = 'endless'; // 'endless' or 'time-attack'
+            let gameStartTime = 0;
+            let timerInterval = null;
             let collisionCooldown = new Set();
-            let fruitInDangerZone = new Map(); // Map to track fruits in danger zone and their timers
+            let fruitInDangerZone = new Map();
 
-            // Fruit definitions
+            // --- Fruit Definitions ---
             const FRUITS = [
                 { level: 0, radius: 15, color: '#ff5757', score: 1 },  // Cherry
                 { level: 1, radius: 20, color: '#ffb357', score: 3 },  // Orange
@@ -117,99 +147,86 @@
             ];
             const MAX_LEVEL = FRUITS.length - 1;
 
+            // --- Core Functions ---
+
+            function setupMainMenu() {
+                mainMenuScreen.style.display = 'flex';
+                gameContainer.style.display = 'none';
+                
+                endlessModeButton.onclick = () => startGame('endless');
+                clearModeButton.onclick = () => startGame('time-attack');
+                backToMenuGameOver.onclick = returnToMenu;
+                backToMenuWin.onclick = returnToMenu;
+            }
+
+            function startGame(mode) {
+                gameMode = mode;
+                mainMenuScreen.style.display = 'none';
+                gameContainer.style.display = 'block';
+
+                if (gameMode === 'time-attack') {
+                    scoreElement.style.display = 'none';
+                    timerElement.style.display = 'block';
+                    gameStartTime = Date.now();
+                    timerInterval = setInterval(updateTimer, 100);
+                } else {
+                    scoreElement.style.display = 'block';
+                    timerElement.style.display = 'none';
+                }
+
+                initGame();
+            }
+
+            function returnToMenu() {
+                if (timerInterval) clearInterval(timerInterval);
+                if (engine) {
+                    World.clear(engine.world);
+                    Engine.clear(engine);
+                    Render.stop(render);
+                    Runner.stop(runner);
+                    if (render.canvas) render.canvas.remove();
+                    render.textures = {};
+                }
+                gameOverScreen.style.display = 'none';
+                winScreen.style.display = 'none';
+                setupMainMenu();
+            }
+
             function initGame() {
-                // Reset game state
                 score = 0;
                 isGameOver = false;
-                continueUsed = false;
                 collisionCooldown.clear();
                 fruitInDangerZone.clear();
                 updateScore(0);
-                gameOverScreen.style.display = 'none';
 
-                // Create engine
                 engine = Engine.create();
                 engine.world.gravity.y = 0.9;
 
-                // Create renderer
                 render = Render.create({
                     element: gameContainer,
                     engine: engine,
-                    options: {
-                        width: WIDTH,
-                        height: HEIGHT,
-                        wireframes: false,
-                        background: '#ffffff'
-                    }
+                    options: { width: WIDTH, height: HEIGHT, wireframes: false, background: '#ffffff' }
                 });
 
-                // Create runner
                 runner = Runner.create();
                 Runner.run(runner, engine);
                 Render.run(render);
 
-                // Create boundaries and game over sensor
                 const ground = Bodies.rectangle(WIDTH / 2, HEIGHT, WIDTH, 30, { isStatic: true, label: 'ground' });
                 const leftWall = Bodies.rectangle(0, HEIGHT / 2, 30, HEIGHT, { isStatic: true, label: 'wall' });
                 const rightWall = Bodies.rectangle(WIDTH, HEIGHT / 2, 30, HEIGHT, { isStatic: true, label: 'wall' });
                 const gameOverSensor = Bodies.rectangle(WIDTH / 2, DANGER_ZONE_Y / 2, WIDTH, DANGER_ZONE_Y, {
-                    isStatic: true,
-                    isSensor: true,
-                    label: 'gameOverSensor',
+                    isStatic: true, isSensor: true, label: 'gameOverSensor',
                     render: { fillStyle: 'rgba(255, 0, 0, 0.1)' }
                 });
 
                 World.add(engine.world, [ground, leftWall, rightWall, gameOverSensor]);
-
-                // Initial fruit
                 addCurrentFruit();
-
-                // Setup event listeners
-                setupEventListeners();
+                setupGameEventListeners();
             }
-
-            function createFruit(x, y, level) {
-                const fruitDef = FRUITS[level];
-                const fruit = Bodies.circle(x, y, fruitDef.radius, {
-                    label: 'fruit',
-                    restitution: 0.3,
-                    friction: 0.5,
-                    render: {
-                        fillStyle: fruitDef.color,
-                        strokeStyle: '#333',
-                        lineWidth: 2
-                    }
-                });
-                fruit.level = level; // Custom property
-                return fruit;
-            }
-
-            function addCurrentFruit() {
-                if (isGameOver) return;
-                const randomLevel = Math.floor(Math.random() * 4); // Only spawn first 4 types
-                currentFruit = createFruit(WIDTH / 2, 40, randomLevel);
-                currentFruit.isStatic = true; // Make it static until dropped
-                World.add(engine.world, currentFruit);
-            }
-
-            function dropCurrentFruit(x) {
-                if (!currentFruit || isGameOver) return;
-                
-                Body.setStatic(currentFruit, false);
-                Body.setPosition(currentFruit, { x: x, y: currentFruit.position.y });
-
-                currentFruit = null;
-                
-                setTimeout(addCurrentFruit, 600);
-            }
-
-            function updateScore(points) {
-                score += points;
-                scoreElement.textContent = `Score: ${score}`;
-            }
-
-            function setupEventListeners() {
-                gameContainer.addEventListener('mousemove', (event) => {
+            
+            function setupGameEventListeners() {
+                const handleMouseMove = (event) => {
                     if (currentFruit && !isGameOver) {
                         const rect = gameContainer.getBoundingClientRect();
                         let x = event.clientX - rect.left;
@@ -217,90 +234,66 @@
                         x = Math.max(radius + 15, Math.min(x, WIDTH - radius - 15));
                         Body.setPosition(currentFruit, { x: x, y: currentFruit.position.y });
                     }
-                });
+                };
 
-                gameContainer.addEventListener('click', (event) => {
+                const handleMouseClick = (event) => {
                     if (currentFruit && !isGameOver) {
                         const rect = gameContainer.getBoundingClientRect();
                         const x = event.clientX - rect.left;
                         dropCurrentFruit(x);
                     }
-                });
-
+                };
+                
+                gameContainer.addEventListener('mousemove', handleMouseMove);
+                gameContainer.addEventListener('click', handleMouseClick);
+                
                 Events.on(engine, 'collisionStart', (event) => {
                     if (isGameOver) return;
                     event.pairs.forEach(pair => {
                         const { bodyA, bodyB } = pair;
-                        
-                        // Fruit merging
                         if (bodyA.label === 'fruit' && bodyB.label === 'fruit' && bodyA.level === bodyB.level) {
                             handleFruitMerge(bodyA, bodyB);
                         }
-                        
-                        // Game over check
                         handleGameOverCollision(pair, 'start');
                     });
                 });
 
                 Events.on(engine, 'collisionEnd', (event) => {
                     if (isGameOver) return;
-                    event.pairs.forEach(pair => {
-                        handleGameOverCollision(pair, 'end');
-                    });
+                    event.pairs.forEach(pair => handleGameOverCollision(pair, 'end'));
                 });
-                
-                restartButton.addEventListener('click', () => {
-                    // Clean up old engine
-                    if (engine) {
-                        World.clear(engine.world);
-                        Engine.clear(engine);
-                        Render.stop(render);
-                        Runner.stop(runner);
-                        if (render.canvas) render.canvas.remove();
-                        render.textures = {};
-                    }
-                    initGame();
-                });
-
-                continueButton.addEventListener('click', continueGame);
             }
 
             function handleFruitMerge(bodyA, bodyB) {
                 const fruitLevel = bodyA.level;
-                
                 const idA = bodyA.id;
                 const idB = bodyB.id;
                 if (collisionCooldown.has(idA) || collisionCooldown.has(idB)) return;
 
                 if (fruitLevel === MAX_LEVEL) {
-                    // When two max-level fruits collide, remove them and add bonus score
                     collisionCooldown.add(idA);
                     collisionCooldown.add(idB);
-
                     World.remove(engine.world, [bodyA, bodyB]);
-                    
-                    updateScore(100); // Bonus score!
+                    updateScore(100);
 
+                    if (gameMode === 'time-attack') {
+                        triggerGameWin();
+                    }
+                    
                     setTimeout(() => {
                         collisionCooldown.delete(idA);
                         collisionCooldown.delete(idB);
                     }, 100);
                 } else {
-                    // Standard merge logic for non-max-level fruits
                     collisionCooldown.add(idA);
                     collisionCooldown.add(idB);
-
                     const newLevel = fruitLevel + 1;
                     const midX = (bodyA.position.x + bodyB.position.x) / 2;
                     const midY = (bodyA.position.y + bodyB.position.y) / 2;
-
                     const newFruit = createFruit(midX, midY, newLevel);
-                    
                     World.remove(engine.world, [bodyA, bodyB]);
                     World.add(engine.world, newFruit);
-                    
                     updateScore(FRUITS[fruitLevel].score);
-                    
                     setTimeout(() => {
                         collisionCooldown.delete(idA);
                         collisionCooldown.delete(idB);
@@ -311,68 +304,91 @@
             function handleGameOverCollision(pair, type) {
                 const { bodyA, bodyB } = pair;
                 let fruitBody = null;
-                if (bodyA.label === 'gameOverSensor' && bodyB.label === 'fruit') {
-                    fruitBody = bodyB;
-                } else if (bodyB.label === 'gameOverSensor' && bodyA.label === 'fruit') {
-                    fruitBody = bodyA;
-                }
-
+                if (bodyA.label === 'gameOverSensor' && bodyB.label === 'fruit') fruitBody = bodyB;
+                else if (bodyB.label === 'gameOverSensor' && bodyA.label === 'fruit') fruitBody = bodyA;
+                
                 if (!fruitBody || fruitBody === currentFruit) return;
 
                 if (type === 'start') {
                     if (!fruitInDangerZone.has(fruitBody.id)) {
                         const timer = setTimeout(() => {
-                            if (fruitBody.speed < 0.1 && fruitBody.angularSpeed < 0.1) {
-                                triggerGameOver();
-                            }
-                        }, 1500); // 1.5 seconds delay
+                            if (fruitBody.speed < 0.1 && fruitBody.angularSpeed < 0.1) triggerGameOver();
+                        }, 1500);
                         fruitInDangerZone.set(fruitBody.id, timer);
                     }
-                } else { // type === 'end'
+                } else {
                     if (fruitInDangerZone.has(fruitBody.id)) {
                         clearTimeout(fruitInDangerZone.get(fruitBody.id));
                         fruitInDangerZone.delete(fruitBody.id);
                     }
                 }
             }
-            
+
+            function createFruit(x, y, level) {
+                const fruitDef = FRUITS[level];
+                const fruit = Bodies.circle(x, y, fruitDef.radius, {
+                    label: 'fruit', restitution: 0.3, friction: 0.5,
+                    render: { fillStyle: fruitDef.color, strokeStyle: '#333', lineWidth: 2 }
+                });
+                fruit.level = level;
+                return fruit;
+            }
+
+            function addCurrentFruit() {
+                if (isGameOver) return;
+                const randomLevel = Math.floor(Math.random() * 4);
+                currentFruit = createFruit(WIDTH / 2, 40, randomLevel);
+                currentFruit.isStatic = true;
+                World.add(engine.world, currentFruit);
+            }
+
+            function dropCurrentFruit(x) {
+                if (!currentFruit || isGameOver) return;
+                Body.setStatic(currentFruit, false);
+                Body.setPosition(currentFruit, { x: x, y: currentFruit.position.y });
+                currentFruit = null;
+                setTimeout(addCurrentFruit, 600);
+            }
+
+            function updateScore(points) {
+                score += points;
+                scoreElement.textContent = `Score: ${score}`;
+            }
+
+            function updateTimer() {
+                if (isGameOver || !gameStartTime) return;
+                const elapsed = Date.now() - gameStartTime;
+                timerElement.textContent = `Time: ${formatTime(elapsed)}`;
+            }
+
+            function formatTime(ms) {
+                const minutes = Math.floor(ms / 60000);
+                const seconds = Math.floor((ms % 60000) / 1000);
+                const milliseconds = Math.floor((ms % 1000) / 100);
+                return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${milliseconds}`;
+            }
+
             function triggerGameOver() {
                 if (isGameOver) return;
                 isGameOver = true;
+                if (timerInterval) clearInterval(timerInterval);
                 Runner.stop(runner);
                 finalScoreElement.textContent = `最終スコア: ${score}`;
-                
-                if (!continueUsed) {
-                    continueButton.style.display = 'block';
-                } else {
-                    continueButton.style.display = 'none';
-                }
-                
                 gameOverScreen.style.display = 'flex';
             }
 
-            function continueGame() {
-                if (continueUsed) return;
-                continueUsed = true;
-                isGameOver = false;
-
-                // Remove fruits in danger zone
-                const fruitsToRemove = engine.world.bodies.filter(body => 
-                    body.label === 'fruit' && body.position.y < DANGER_ZONE_Y + 20
-                );
-                fruitsToRemove.forEach(fruit => World.remove(engine.world, fruit));
-
-                gameOverScreen.style.display = 'none';
-                Runner.run(runner, engine);
-                
-                // Ensure there's a fruit to drop
-                if (!currentFruit) {
-                    addCurrentFruit();
-                }
+            function triggerGameWin() {
+                if (isGameOver) return;
+                isGameOver = true;
+                if (timerInterval) clearInterval(timerInterval);
+                Runner.stop(runner);
+                const finalTime = Date.now() - gameStartTime;
+                winScoreElement.textContent = `クリアタイム: ${formatTime(finalTime)}`;
+                winScreen.style.display = 'flex';
             }
-
-            // Start the game for the first time
-            initGame();
+            
+            // --- Initial Setup ---
+            setupMainMenu();
         });
     </script>
 </body>
