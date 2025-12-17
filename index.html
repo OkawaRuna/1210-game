@@ -267,30 +267,45 @@
 
             function handleFruitMerge(bodyA, bodyB) {
                 const fruitLevel = bodyA.level;
-                if (fruitLevel === MAX_LEVEL) return;
-
+                
                 const idA = bodyA.id;
                 const idB = bodyB.id;
                 if (collisionCooldown.has(idA) || collisionCooldown.has(idB)) return;
 
-                collisionCooldown.add(idA);
-                collisionCooldown.add(idB);
+                if (fruitLevel === MAX_LEVEL) {
+                    // When two max-level fruits collide, remove them and add bonus score
+                    collisionCooldown.add(idA);
+                    collisionCooldown.add(idB);
 
-                const newLevel = fruitLevel + 1;
-                const midX = (bodyA.position.x + bodyB.position.x) / 2;
-                const midY = (bodyA.position.y + bodyB.position.y) / 2;
+                    World.remove(engine.world, [bodyA, bodyB]);
+                    
+                    updateScore(100); // Bonus score!
 
-                const newFruit = createFruit(midX, midY, newLevel);
-                
-                World.remove(engine.world, [bodyA, bodyB]);
-                World.add(engine.world, newFruit);
-                
-                updateScore(FRUITS[fruitLevel].score);
-                
-                setTimeout(() => {
-                    collisionCooldown.delete(idA);
-                    collisionCooldown.delete(idB);
-                }, 100);
+                    setTimeout(() => {
+                        collisionCooldown.delete(idA);
+                        collisionCooldown.delete(idB);
+                    }, 100);
+                } else {
+                    // Standard merge logic for non-max-level fruits
+                    collisionCooldown.add(idA);
+                    collisionCooldown.add(idB);
+
+                    const newLevel = fruitLevel + 1;
+                    const midX = (bodyA.position.x + bodyB.position.x) / 2;
+                    const midY = (bodyA.position.y + bodyB.position.y) / 2;
+
+                    const newFruit = createFruit(midX, midY, newLevel);
+                    
+                    World.remove(engine.world, [bodyA, bodyB]);
+                    World.add(engine.world, newFruit);
+                    
+                    updateScore(FRUITS[fruitLevel].score);
+                    
+                    setTimeout(() => {
+                        collisionCooldown.delete(idA);
+                        collisionCooldown.delete(idB);
+                    }, 100);
+                }
             }
 
             function handleGameOverCollision(pair, type) {
